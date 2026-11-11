@@ -1,0 +1,40 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DJANGO_DEBUG: "1"
+      DJANGO_SECRET_KEY: "dev-only-change-me"
+      DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1"
+      DATABASE_URL: "postgres://cuidar:cuidar@db:5432/cuidar"
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+      - redis
+  worker:
+    build: .
+    command: celery -A cuidar worker -l info
+    environment:
+      DJANGO_DEBUG: "1"
+      DJANGO_SECRET_KEY: "dev-only-change-me"
+      DATABASE_URL: "postgres://cuidar:cuidar@db:5432/cuidar"
+      REDIS_URL: "redis://redis:6379/0"
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+      - redis
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: cuidar
+      POSTGRES_USER: cuidar
+      POSTGRES_PASSWORD: cuidar
+    volumes:
+      - cuidar_postgres:/var/lib/postgresql/data
+  redis:
+    image: redis:7-alpine
+volumes:
+  cuidar_postgres:
