@@ -5,14 +5,15 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.db import transaction
+from django.db.models import Q
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.views import APIView
-from .models import Alert, AuditEvent, CarePlan, CareTask, Medication, Resident, FamilyAccess
+from .models import Alert, AuditEvent, CarePlan, CareProcedure, CareTask, Medication, Resident, FamilyAccess
 from .serializers import ResidentSerializer, CareTaskSerializer, MedicationSerializer, AdministrationSerializer, AlertSerializer, AuditSerializer, SessionSerializer, FamilyAccessSerializer
-from .services import profile_for, open_resident_session, complete_task, record_administration, audit
+from .services import profile_for, open_resident_session, complete_task, record_administration, audit, generate_procedure_occurrences
 
 def home(request):
     return render(request, "home.html")
@@ -31,7 +32,7 @@ def caregiver(request):
         plan__active=True,
         plan__approved_at__isnull=False,
         status="PENDING",
-    ).select_related("plan__resident").order_by("scheduled_at")[:60]
+    ).filter(Q(procedure__isnull=True) | Q(procedure__status="PUBLISHED")).select_related("plan__resident").order_by("scheduled_at")[:60]
     recent = CareTask.objects.filter(
         plan__resident__institution=profile.institution,
     ).exclude(status="PENDING").select_related("plan__resident", "completed_by__user").order_by("-completed_at")[:12]
@@ -92,37 +93,67 @@ def care_procedures(request):
         name = request.POST.get("name", "").strip()
         instruction = request.POST.get("instruction", "").strip()
         scheduled_at = parse_datetime(request.POST.get("scheduled_at", ""))
+        ends_on = request.POST.get("ends_on") or None
+        frequency = request.POST.get("frequency", "ONCE")
+        scheduled_times = [value.strip() for value in request.POST.get("scheduled_times", "").split(",") if value.strip()]
+        weekdays = [int(value) for value in request.POST.getlist("weekdays") if value.isdigit() and 0 <= int(value) <= 6]
         publish = request.POST.get("action") == "publish"
         resident = Resident.objects.filter(pk=resident_id, institution=profile.institution).first()
-        if not resident or not name or not instruction or not scheduled_at:
-            error = "Informe residente, procedimento, instrução e data/hora."
+        if not resident or not name or not instruction or not scheduled_at or not scheduled_times or frequency not in {"ONCE", "DAILY", "WEEKLY", "SELECTED_DAYS"}:
+            error = "Informe residente, procedimento, instrução, frequência, horário e data de início."
+        elif ends_on and ends_on < scheduled_at.date().isoformat():
+            error = "A data de término não pode ser anterior ao início."
+        elif frequency == "SELECTED_DAYS" and not weekdays:
+            error = "Selecione pelo menos um dia da semana."
         else:
             if timezone.is_naive(scheduled_at):
                 scheduled_at = timezone.make_aware(scheduled_at, timezone.get_current_timezone())
             with transaction.atomic():
-                plan = CarePlan.objects.create(resident=resident, version=1, active=False)
-                task = CareTask.objects.create(plan=plan, name=name, kind="CARE", scheduled_at=scheduled_at, instruction=instruction)
-                audit(profile, "PROCEDURE_DRAFT_CREATE", resident, after={"task_id": task.id, "name": name, "scheduled_at": scheduled_at.isoformat()})
+                previous = CarePlan.objects.filter(resident=resident).order_by("-version").first()
+                previous_procedure = CareProcedure.objects.filter(plan__resident=resident, name=name).order_by("-version").first()
+                plan = CarePlan.objects.create(resident=resident, version=(previous.version + 1 if previous else 1), active=False)
+                procedure = CareProcedure.objects.create(plan=plan, name=name, instruction=instruction, frequency=frequency, scheduled_times=scheduled_times, weekdays=weekdays, starts_on=scheduled_at.date(), ends_on=ends_on, version=(previous_procedure.version + 1 if previous_procedure else 1), supersedes=previous_procedure, created_by=profile)
+                audit(profile, "PROCEDURE_DRAFT_CREATE", resident, after={"procedure_id": procedure.id, "name": name, "frequency": frequency, "scheduled_times": scheduled_times})
                 if publish:
-                    plan.active = True; plan.approved_by = profile; plan.approved_at = timezone.now(); plan.save(update_fields=["active", "approved_by", "approved_at"])
-                    audit(profile, "PROCEDURE_APPROVE", resident, after={"task_id": task.id, "plan_id": plan.id, "approved_at": plan.approved_at.isoformat()})
+                    procedure.status = "PUBLISHED"; procedure.approved_by = profile; procedure.approved_at = timezone.now(); procedure.save(update_fields=["status", "approved_by", "approved_at"])
+                    plan.active = True; plan.approved_by = profile; plan.approved_at = procedure.approved_at; plan.save(update_fields=["active", "approved_by", "approved_at"])
+                    generate_procedure_occurrences(procedure)
+                    audit(profile, "PROCEDURE_APPROVE", resident, after={"procedure_id": procedure.id, "plan_id": plan.id, "approved_at": procedure.approved_at.isoformat()})
             message = "Procedimento aprovado e publicado na rotina dos cuidadores." if publish else "Rascunho salvo. Revise e publique quando estiver pronto."
     residents = Resident.objects.filter(institution=profile.institution, status="ACTIVE").order_by("name")
-    tasks = CareTask.objects.filter(plan__resident__institution=profile.institution).select_related("plan__resident", "plan__approved_by__user").order_by("-plan__active", "scheduled_at")[:80]
-    return render(request, "procedures.html", {"profile": profile, "residents": residents, "tasks": tasks, "message": message, "error": error})
+    procedures = CareProcedure.objects.filter(plan__resident__institution=profile.institution).select_related("plan__resident", "approved_by__user", "created_by__user").prefetch_related("occurrences").order_by("-created_at")[:80]
+    return render(request, "procedures.html", {"profile": profile, "residents": residents, "procedures": procedures, "message": message, "error": error})
 
-def approve_procedure(request, task_id):
+def approve_procedure(request, procedure_id):
     profile, response = _institutional_manager(request)
     if response:
         return response
     if request.method != "POST":
         return redirect("care_procedures")
-    task = CareTask.objects.filter(pk=task_id, plan__resident__institution=profile.institution).select_related("plan", "plan__resident").first()
-    if not task:
-        return render(request, "procedures.html", {"profile": profile, "residents": Resident.objects.filter(institution=profile.institution), "tasks": [], "error": "Procedimento não encontrado."}, status=404)
-    if not task.plan.active:
-        task.plan.active = True; task.plan.approved_by = profile; task.plan.approved_at = timezone.now(); task.plan.save(update_fields=["active", "approved_by", "approved_at"])
-        audit(profile, "PROCEDURE_APPROVE", task.plan.resident, after={"task_id": task.id, "plan_id": task.plan_id, "approved_at": task.plan.approved_at.isoformat()})
+    procedure = CareProcedure.objects.filter(pk=procedure_id, plan__resident__institution=profile.institution).select_related("plan", "plan__resident").first()
+    if not procedure:
+        return redirect("care_procedures")
+    if procedure.status == "DRAFT":
+        procedure.status = "PUBLISHED"; procedure.approved_by = profile; procedure.approved_at = timezone.now(); procedure.save(update_fields=["status", "approved_by", "approved_at"])
+        procedure.plan.active = True; procedure.plan.approved_by = profile; procedure.plan.approved_at = procedure.approved_at; procedure.plan.save(update_fields=["active", "approved_by", "approved_at"])
+        generate_procedure_occurrences(procedure)
+        audit(profile, "PROCEDURE_APPROVE", procedure.plan.resident, after={"procedure_id": procedure.id, "plan_id": procedure.plan_id, "approved_at": procedure.approved_at.isoformat()})
+    return redirect("care_procedures")
+
+def change_procedure_status(request, procedure_id, new_status):
+    profile, response = _institutional_manager(request)
+    if response:
+        return response
+    if request.method == "POST" and new_status in {"PAUSED", "ENDED", "PUBLISHED"}:
+        procedure = CareProcedure.objects.filter(pk=procedure_id, plan__resident__institution=profile.institution).select_related("plan", "plan__resident").first()
+        if procedure:
+            procedure.status = new_status
+            procedure.save(update_fields=["status", "updated_at"])
+            if new_status == "PUBLISHED":
+                procedure.plan.active = True
+                procedure.plan.save(update_fields=["active"])
+                generate_procedure_occurrences(procedure)
+            audit(profile, "PROCEDURE_STATUS_CHANGE", procedure.plan.resident, after={"procedure_id": procedure.id, "status": new_status})
     return redirect("care_procedures")
 
 @login_required(login_url="manager_login")
@@ -183,7 +214,7 @@ class ResidentViewSet(InstitutionScopedMixin, viewsets.ModelViewSet):
 class TaskViewSet(InstitutionScopedMixin, viewsets.ReadOnlyModelViewSet):
     serializer_class = CareTaskSerializer
     def get_queryset(self):
-        return CareTask.objects.filter(plan__resident__institution=self.profile().institution, plan__active=True, plan__approved_at__isnull=False).select_related("plan", "plan__resident").order_by("scheduled_at")
+        return CareTask.objects.filter(plan__resident__institution=self.profile().institution, plan__active=True, plan__approved_at__isnull=False).filter(Q(procedure__isnull=True) | Q(procedure__status="PUBLISHED")).select_related("plan", "plan__resident").order_by("scheduled_at")
     @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):
         self.require_roles("ADMIN", "COORD", "NURSE", "CAREGIVER")

@@ -24,6 +24,7 @@ Para acesso gerencial, use `/login/`; após autenticar, a central fica em `/cent
 - residentes e página inicial da central;
 - planos e tarefas de cuidado;
 - criação gerencial de procedimentos em rascunho, revisão e publicação aprovada para a rotina móvel;
+- recorrência diária, semanal ou por dias selecionados, múltiplos horários, término, pausa, encerramento e versionamento;
 - sessão exclusiva por residente, com transferência emergencial auditada;
 - prescrição versionada e administração de medicamento;
 - trava administrativa de 60 minutos com justificativa obrigatória;

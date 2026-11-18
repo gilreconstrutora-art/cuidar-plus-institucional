@@ -5,7 +5,7 @@ from django.core.management import call_command
 from tempfile import NamedTemporaryFile
 from django.utils import timezone
 from rest_framework.test import APIClient
-from .models import Institution, StaffProfile, Resident, CarePlan, CareTask, Medication, MedicationAdministration, Alert, AuditEvent, FamilyAccess, NotificationDelivery
+from .models import Institution, StaffProfile, Resident, CarePlan, CareProcedure, CareTask, Medication, MedicationAdministration, Alert, AuditEvent, FamilyAccess, NotificationDelivery
 from .tasks import process_notification_outbox
 
 class CareCoreTests(TestCase):
@@ -82,17 +82,18 @@ class CareCoreTests(TestCase):
         self.staff.save(update_fields=["role"])
         client = Client()
         self.assertTrue(client.login(username="cuidadora", password="segura"))
-        payload = {"resident_id": self.resident.id, "name": "Banho assistido", "instruction": "Executar conforme plano técnico.", "scheduled_at": "2030-01-02T08:00", "action": "draft"}
+        payload = {"resident_id": self.resident.id, "name": "Banho assistido", "instruction": "Executar conforme plano técnico.", "frequency": "DAILY", "scheduled_times": "08:00, 16:00", "scheduled_at": f"{timezone.localdate().isoformat()}T08:00", "action": "draft"}
         created = client.post("/central/procedimentos/", payload)
         self.assertEqual(created.status_code, 200)
-        task = CareTask.objects.get(name="Banho assistido")
-        self.assertFalse(task.plan.active)
+        procedure = CareProcedure.objects.get(name="Banho assistido")
+        self.assertFalse(procedure.plan.active)
         self.assertEqual(client.get("/api/tasks/").json(), [])
-        published = client.post(f"/central/procedimentos/{task.id}/aprovar/")
+        published = client.post(f"/central/procedimentos/{procedure.id}/aprovar/")
         self.assertEqual(published.status_code, 302)
-        task.plan.refresh_from_db()
-        self.assertTrue(task.plan.active)
-        self.assertEqual(task.plan.approved_by_id, self.staff.id)
+        procedure.refresh_from_db()
+        self.assertTrue(procedure.plan.active)
+        self.assertEqual(procedure.approved_by_id, self.staff.id)
+        self.assertEqual(procedure.occurrences.count(), 30)
 
     def test_manager_can_read_summary_report(self):
         self.staff.role = "COORD"; self.staff.save(update_fields=["role"])

@@ -5,7 +5,8 @@ from datetime import timedelta
 from celery import shared_task
 from django.conf import settings
 from django.utils import timezone
-from .models import NotificationDelivery
+from .models import CareProcedure, NotificationDelivery
+from .services import generate_procedure_occurrences
 
 @shared_task
 def process_notification_outbox(limit=50):
@@ -36,3 +37,10 @@ def process_notification_outbox(limit=50):
             row.save(update_fields=["attempts", "last_error", "next_attempt_at", "status"])
             failed += 1
     return {"claimed": len(rows), "sent": sent, "failed": failed, "deferred": deferred}
+
+@shared_task
+def generate_published_procedure_occurrences():
+    total = 0
+    for procedure in CareProcedure.objects.filter(status="PUBLISHED").iterator():
+        total += generate_procedure_occurrences(procedure)
+    return {"created": total}

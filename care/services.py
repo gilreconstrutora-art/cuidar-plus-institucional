@@ -1,8 +1,40 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
-from .models import AuditEvent, Alert, CareTask, MedicationAdministration, Resident, ResidentSession, StockMovement
+from .models import AuditEvent, Alert, CareProcedure, CareTask, MedicationAdministration, Resident, ResidentSession, StockMovement
+
+def generate_procedure_occurrences(procedure, horizon_days=14):
+    if procedure.status != "PUBLISHED":
+        return 0
+    today = timezone.localdate()
+    start = max(procedure.starts_on, today)
+    end = today + timedelta(days=horizon_days)
+    if procedure.ends_on:
+        end = min(end, procedure.ends_on)
+    created = 0
+    current = start
+    while current <= end:
+        include = procedure.frequency == "DAILY"
+        if procedure.frequency == "ONCE":
+            include = current == procedure.starts_on
+        elif procedure.frequency == "WEEKLY":
+            include = current.weekday() == procedure.starts_on.weekday()
+        elif procedure.frequency == "SELECTED_DAYS":
+            include = current.weekday() in procedure.weekdays
+        if include:
+            for time_value in procedure.scheduled_times:
+                try:
+                    hour, minute = [int(part) for part in str(time_value).split(":", 1)]
+                    scheduled = timezone.make_aware(datetime.combine(current, datetime.min.time().replace(hour=hour, minute=minute)), timezone.get_current_timezone())
+                except (TypeError, ValueError):
+                    continue
+                _, was_created = CareTask.objects.get_or_create(procedure=procedure, scheduled_at=scheduled, defaults={"plan": procedure.plan, "name": procedure.name, "kind": "CARE", "instruction": procedure.instruction})
+                created += int(was_created)
+        current += timedelta(days=1)
+        if procedure.frequency == "ONCE":
+            break
+    return created
 
 def profile_for(user):
     try:

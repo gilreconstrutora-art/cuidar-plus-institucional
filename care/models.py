@@ -37,10 +37,31 @@ class CarePlan(models.Model):
     approved_by = models.ForeignKey(StaffProfile, null=True, blank=True, on_delete=models.PROTECT)
     approved_at = models.DateTimeField(null=True, blank=True)
 
+class CareProcedure(models.Model):
+    FREQUENCY = [("ONCE", "Uma vez"), ("DAILY", "Diária"), ("WEEKLY", "Semanal"), ("SELECTED_DAYS", "Dias selecionados")]
+    STATUS = [("DRAFT", "Rascunho"), ("PUBLISHED", "Publicado"), ("PAUSED", "Pausado"), ("ENDED", "Encerrado")]
+    plan = models.ForeignKey(CarePlan, on_delete=models.CASCADE, related_name="procedures")
+    name = models.CharField(max_length=180)
+    instruction = models.TextField()
+    frequency = models.CharField(max_length=20, choices=FREQUENCY, default="ONCE")
+    scheduled_times = models.JSONField(default=list)
+    weekdays = models.JSONField(default=list, blank=True)
+    starts_on = models.DateField()
+    ends_on = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS, default="DRAFT")
+    version = models.PositiveIntegerField(default=1)
+    supersedes = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="next_versions")
+    created_by = models.ForeignKey(StaffProfile, on_delete=models.PROTECT, related_name="created_procedures")
+    approved_by = models.ForeignKey(StaffProfile, null=True, blank=True, on_delete=models.PROTECT, related_name="approved_procedures")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
 class CareTask(models.Model):
     KIND = [("ADMIN", "Administrativa"), ("CARE", "Assistencial"), ("CLINICAL", "Clínica")]
     STATUS = [("PENDING", "Pendente"), ("DONE", "Concluída"), ("MISSED", "Não realizada"), ("REFUSED", "Recusada"), ("EXCEPTION", "Intercorrência")]
     plan = models.ForeignKey(CarePlan, on_delete=models.CASCADE, related_name="tasks")
+    procedure = models.ForeignKey(CareProcedure, null=True, blank=True, on_delete=models.PROTECT, related_name="occurrences")
     name = models.CharField(max_length=180)
     kind = models.CharField(max_length=20, choices=KIND, default="CARE")
     scheduled_at = models.DateTimeField()
