@@ -23,6 +23,7 @@ Para acesso gerencial, use `/login/`; após autenticar, a central fica em `/cent
 - perfis institucionais e autenticação Django/DRF;
 - residentes e página inicial da central;
 - planos e tarefas de cuidado;
+- criação gerencial de procedimentos em rascunho, revisão e publicação aprovada para a rotina móvel;
 - sessão exclusiva por residente, com transferência emergencial auditada;
 - prescrição versionada e administração de medicamento;
 - trava administrativa de 60 minutos com justificativa obrigatória;

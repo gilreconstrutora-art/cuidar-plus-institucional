@@ -13,7 +13,9 @@ class Command(BaseCommand):
             user.set_unusable_password(); user.save()
         staff, _ = StaffProfile.objects.get_or_create(user=user, defaults={"institution": institution, "role": "CAREGIVER", "identifier": "DEMO-01"})
         resident, _ = Resident.objects.get_or_create(institution=institution, name="Maria da Silva", defaults={"room": "1", "bed": "A"})
-        plan, _ = CarePlan.objects.get_or_create(resident=resident, version=1)
+        plan, _ = CarePlan.objects.get_or_create(resident=resident, version=1, defaults={"approved_by": staff, "approved_at": timezone.now()})
+        if not plan.approved_at:
+            plan.approved_by = staff; plan.approved_at = timezone.now(); plan.active = True; plan.save(update_fields=["approved_by", "approved_at", "active"])
         CareTask.objects.get_or_create(plan=plan, name="Hidratação", scheduled_at=timezone.now() + timedelta(hours=1), defaults={"instruction": "Oferecer água conforme plano autorizado."})
         Medication.objects.get_or_create(resident=resident, name="Medicamento demonstrativo", defaults={"presentation": "comprimido", "dose": 1, "unit": "un", "route": "oral", "frequency": "conforme prescrição", "scheduled_times": ["08:00"], "starts_on": timezone.localdate(), "prescribed_by": staff})
         self.stdout.write(self.style.SUCCESS("Dados demo criados. Usuário demo-cuidador está sem senha e não autentica até ser configurado localmente."))

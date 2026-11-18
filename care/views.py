@@ -3,12 +3,14 @@ from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
+from django.db import transaction
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.views import APIView
-from .models import Alert, AuditEvent, CareTask, Medication, Resident, FamilyAccess
+from .models import Alert, AuditEvent, CarePlan, CareTask, Medication, Resident, FamilyAccess
 from .serializers import ResidentSerializer, CareTaskSerializer, MedicationSerializer, AdministrationSerializer, AlertSerializer, AuditSerializer, SessionSerializer, FamilyAccessSerializer
 from .services import profile_for, open_resident_session, complete_task, record_administration, audit
 
@@ -26,6 +28,8 @@ def caregiver(request):
         return render(request, "login.html", {"error": "Esta conta não possui acesso à rotina do cuidador."}, status=403)
     tasks = CareTask.objects.filter(
         plan__resident__institution=profile.institution,
+        plan__active=True,
+        plan__approved_at__isnull=False,
         status="PENDING",
     ).select_related("plan__resident").order_by("scheduled_at")[:60]
     recent = CareTask.objects.filter(
@@ -65,6 +69,61 @@ def manager_login(request):
 def manager_logout(request):
     logout(request)
     return redirect("manager_login")
+
+def _institutional_manager(request):
+    if not request.user.is_authenticated:
+        return None, redirect(f"/login/?next=/central/procedimentos/")
+    try:
+        profile = profile_for(request.user)
+    except Exception:
+        return None, render(request, "login.html", {"error": "Usuário sem vínculo institucional."}, status=403)
+    if profile.role not in {"ADMIN", "COORD", "NURSE"}:
+        return None, render(request, "login.html", {"error": "Esta função não pode criar ou publicar procedimentos."}, status=403)
+    return profile, None
+
+def care_procedures(request):
+    profile, response = _institutional_manager(request)
+    if response:
+        return response
+    message = None
+    error = None
+    if request.method == "POST":
+        resident_id = request.POST.get("resident_id", "")
+        name = request.POST.get("name", "").strip()
+        instruction = request.POST.get("instruction", "").strip()
+        scheduled_at = parse_datetime(request.POST.get("scheduled_at", ""))
+        publish = request.POST.get("action") == "publish"
+        resident = Resident.objects.filter(pk=resident_id, institution=profile.institution).first()
+        if not resident or not name or not instruction or not scheduled_at:
+            error = "Informe residente, procedimento, instrução e data/hora."
+        else:
+            if timezone.is_naive(scheduled_at):
+                scheduled_at = timezone.make_aware(scheduled_at, timezone.get_current_timezone())
+            with transaction.atomic():
+                plan = CarePlan.objects.create(resident=resident, version=1, active=False)
+                task = CareTask.objects.create(plan=plan, name=name, kind="CARE", scheduled_at=scheduled_at, instruction=instruction)
+                audit(profile, "PROCEDURE_DRAFT_CREATE", resident, after={"task_id": task.id, "name": name, "scheduled_at": scheduled_at.isoformat()})
+                if publish:
+                    plan.active = True; plan.approved_by = profile; plan.approved_at = timezone.now(); plan.save(update_fields=["active", "approved_by", "approved_at"])
+                    audit(profile, "PROCEDURE_APPROVE", resident, after={"task_id": task.id, "plan_id": plan.id, "approved_at": plan.approved_at.isoformat()})
+            message = "Procedimento aprovado e publicado na rotina dos cuidadores." if publish else "Rascunho salvo. Revise e publique quando estiver pronto."
+    residents = Resident.objects.filter(institution=profile.institution, status="ACTIVE").order_by("name")
+    tasks = CareTask.objects.filter(plan__resident__institution=profile.institution).select_related("plan__resident", "plan__approved_by__user").order_by("-plan__active", "scheduled_at")[:80]
+    return render(request, "procedures.html", {"profile": profile, "residents": residents, "tasks": tasks, "message": message, "error": error})
+
+def approve_procedure(request, task_id):
+    profile, response = _institutional_manager(request)
+    if response:
+        return response
+    if request.method != "POST":
+        return redirect("care_procedures")
+    task = CareTask.objects.filter(pk=task_id, plan__resident__institution=profile.institution).select_related("plan", "plan__resident").first()
+    if not task:
+        return render(request, "procedures.html", {"profile": profile, "residents": Resident.objects.filter(institution=profile.institution), "tasks": [], "error": "Procedimento não encontrado."}, status=404)
+    if not task.plan.active:
+        task.plan.active = True; task.plan.approved_by = profile; task.plan.approved_at = timezone.now(); task.plan.save(update_fields=["active", "approved_by", "approved_at"])
+        audit(profile, "PROCEDURE_APPROVE", task.plan.resident, after={"task_id": task.id, "plan_id": task.plan_id, "approved_at": task.plan.approved_at.isoformat()})
+    return redirect("care_procedures")
 
 @login_required(login_url="manager_login")
 def manager_dashboard(request):
@@ -124,7 +183,7 @@ class ResidentViewSet(InstitutionScopedMixin, viewsets.ModelViewSet):
 class TaskViewSet(InstitutionScopedMixin, viewsets.ReadOnlyModelViewSet):
     serializer_class = CareTaskSerializer
     def get_queryset(self):
-        return CareTask.objects.filter(plan__resident__institution=self.profile().institution).select_related("plan", "plan__resident").order_by("scheduled_at")
+        return CareTask.objects.filter(plan__resident__institution=self.profile().institution, plan__active=True, plan__approved_at__isnull=False).select_related("plan", "plan__resident").order_by("scheduled_at")
     @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):
         self.require_roles("ADMIN", "COORD", "NURSE", "CAREGIVER")

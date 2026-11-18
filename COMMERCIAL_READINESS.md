@@ -5,6 +5,7 @@
 - Página institucional em `/apresentacao/`.
 - Central gerencial em `/`.
 - Rotina móvel autenticada em `/caregiver/`, com tarefas reais, identificação do perfil conectado, marcação de execução e observação obrigatória para exceções.
+- Tela gerencial em `/central/procedimentos/` para escrever, salvar rascunho, revisar e aprovar procedimentos antes da publicação nos celulares.
 - API autenticada para residentes, tarefas, medicamentos, alertas e auditoria.
 - Relatório-resumo em `/api/reports/summary/` para perfis autorizados.
 - Área familiar somente leitura por token expirável.

@@ -14,7 +14,7 @@ class CareCoreTests(TestCase):
         user = User.objects.create_user("cuidadora", password="segura")
         self.staff = StaffProfile.objects.create(user=user, institution=self.institution, role="CAREGIVER", identifier="C-01")
         self.resident = Resident.objects.create(institution=self.institution, name="Maria Teste", room="1", bed="A")
-        self.plan = CarePlan.objects.create(resident=self.resident)
+        self.plan = CarePlan.objects.create(resident=self.resident, approved_by=self.staff, approved_at=timezone.now())
         self.medication = Medication.objects.create(resident=self.resident, name="Medicamento teste", presentation="comprimido", dose=1, unit="un", route="oral", frequency="diária", scheduled_times=["08:00"], starts_on=timezone.localdate(), prescribed_by=self.staff)
         self.client = APIClient(); self.client.force_authenticate(user=user)
 
@@ -76,6 +76,23 @@ class CareCoreTests(TestCase):
         self.assertEqual(rejected.status_code, 400)
         accepted = self.client.post(f"/api/tasks/{task.pk}/complete/", {"status": "MISSED", "note": "Residente recusou o procedimento."}, format="json")
         self.assertEqual(accepted.status_code, 200)
+
+    def test_manager_creates_draft_and_publishes_procedure(self):
+        self.staff.role = "COORD"
+        self.staff.save(update_fields=["role"])
+        client = Client()
+        self.assertTrue(client.login(username="cuidadora", password="segura"))
+        payload = {"resident_id": self.resident.id, "name": "Banho assistido", "instruction": "Executar conforme plano técnico.", "scheduled_at": "2030-01-02T08:00", "action": "draft"}
+        created = client.post("/central/procedimentos/", payload)
+        self.assertEqual(created.status_code, 200)
+        task = CareTask.objects.get(name="Banho assistido")
+        self.assertFalse(task.plan.active)
+        self.assertEqual(client.get("/api/tasks/").json(), [])
+        published = client.post(f"/central/procedimentos/{task.id}/aprovar/")
+        self.assertEqual(published.status_code, 302)
+        task.plan.refresh_from_db()
+        self.assertTrue(task.plan.active)
+        self.assertEqual(task.plan.approved_by_id, self.staff.id)
 
     def test_manager_can_read_summary_report(self):
         self.staff.role = "COORD"; self.staff.save(update_fields=["role"])
