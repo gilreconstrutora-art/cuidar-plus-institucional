@@ -4,7 +4,7 @@
 
 - Página institucional em `/apresentacao/`.
 - Central gerencial em `/`.
-- Fluxo móvel demonstrativo em `/caregiver/`.
+- Rotina móvel autenticada em `/caregiver/`, com tarefas reais, identificação do perfil conectado, marcação de execução e observação obrigatória para exceções.
 - API autenticada para residentes, tarefas, medicamentos, alertas e auditoria.
 - Relatório-resumo em `/api/reports/summary/` para perfis autorizados.
 - Área familiar somente leitura por token expirável.

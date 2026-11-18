@@ -1,6 +1,7 @@
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -15,23 +16,46 @@ def home(request):
     return render(request, "home.html")
 
 def caregiver(request):
-    return render(request, "caregiver.html")
+    if not request.user.is_authenticated:
+        return redirect(f"/login/?next=/caregiver/")
+    try:
+        profile = profile_for(request.user)
+    except Exception:
+        return render(request, "login.html", {"error": "Usuário sem vínculo institucional."}, status=403)
+    if profile.role not in {"ADMIN", "COORD", "NURSE", "CAREGIVER"}:
+        return render(request, "login.html", {"error": "Esta conta não possui acesso à rotina do cuidador."}, status=403)
+    tasks = CareTask.objects.filter(
+        plan__resident__institution=profile.institution,
+        status="PENDING",
+    ).select_related("plan__resident").order_by("scheduled_at")[:60]
+    recent = CareTask.objects.filter(
+        plan__resident__institution=profile.institution,
+    ).exclude(status="PENDING").select_related("plan__resident", "completed_by__user").order_by("-completed_at")[:12]
+    return render(request, "caregiver.html", {"profile": profile, "tasks": tasks, "recent": recent})
 
 def presentation(request):
     return render(request, "presentation.html")
 
 def manager_login(request):
     if request.user.is_authenticated:
+        if getattr(getattr(request.user, "staffprofile", None), "role", None) == "CAREGIVER":
+            return redirect("caregiver")
         return redirect("manager_dashboard")
     error = None
     if request.method == "POST":
         user = authenticate(request, username=request.POST.get("username", ""), password=request.POST.get("password", ""))
         if user and user.is_active:
             try:
-                if user.staffprofile.role not in {"ADMIN", "COORD", "NURSE"}:
-                    error = "Esta conta não possui acesso gerencial."
+                if user.staffprofile.role not in {"ADMIN", "COORD", "NURSE", "CAREGIVER"}:
+                    error = "Esta conta não possui acesso institucional."
                 else:
-                    login(request, user); return redirect("manager_dashboard")
+                    login(request, user)
+                    requested = request.POST.get("next") or request.GET.get("next", "")
+                    if requested and url_has_allowed_host_and_scheme(requested, allowed_hosts={request.get_host()}):
+                        return redirect(requested)
+                    if user.staffprofile.role == "CAREGIVER":
+                        return redirect("caregiver")
+                    return redirect("manager_dashboard")
             except Exception:
                 error = "Usuário sem vínculo institucional."
         else:

@@ -13,7 +13,7 @@ $py = 'C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\py
 
 Abra `http://127.0.0.1:8000/`. A API de saúde está em `/api/health/`; os demais endpoints exigem autenticação.
 
-Para apresentação comercial, abra `http://127.0.0.1:8000/apresentacao/`. O fluxo móvel demonstrativo está em `http://127.0.0.1:8000/caregiver/`.
+Para apresentação comercial, abra `http://127.0.0.1:8000/apresentacao/`. A rotina móvel autenticada está em `http://127.0.0.1:8000/caregiver/`; ela redireciona o profissional para `/login/` e grava as ações com o perfil institucional conectado.
 
 Para acesso gerencial, use `/login/`; após autenticar, a central fica em `/central/`. A implantação reproduzível está documentada em [DEPLOYMENT.md](DEPLOYMENT.md) e no comando `scripts/deploy.ps1`.
 

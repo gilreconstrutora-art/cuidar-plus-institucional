@@ -38,6 +38,8 @@ def complete_task(actor, task, status, note=""):
         raise ValidationError("Atividade fora da instituição do usuário.")
     if task.status != "PENDING":
         raise ValidationError("Atividade já processada; use uma correção auditada.")
+    if status != "DONE" and not note.strip():
+        raise ValidationError("Informe a observação ou o motivo quando o cuidado não for concluído.")
     task.status = status; task.note = note; task.completed_by = actor; task.completed_at = timezone.now(); task.save()
     audit(actor, "TASK_COMPLETE", task.plan.resident, before={"status": "PENDING"}, after={"status": status, "note": note})
     return task

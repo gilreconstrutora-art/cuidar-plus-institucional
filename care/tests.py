@@ -1,6 +1,6 @@
 from datetime import timedelta
 from django.contrib.auth.models import User
-from django.test import TestCase
+from django.test import Client, TestCase
 from django.core.management import call_command
 from tempfile import NamedTemporaryFile
 from django.utils import timezone
@@ -52,6 +52,30 @@ class CareCoreTests(TestCase):
     def test_caregiver_cannot_change_resident_cadastre(self):
         response = self.client.post("/api/residents/", {"name": "Outro residente"}, format="json")
         self.assertEqual(response.status_code, 403)
+
+    def test_caregiver_mobile_login_records_authenticated_actor(self):
+        task = CareTask.objects.create(plan=self.plan, name="Hidratação", scheduled_at=timezone.now(), instruction="Oferecer água conforme plano.")
+        client = Client()
+        self.assertEqual(client.get("/caregiver/").status_code, 302)
+        login_response = client.post("/login/", {"username": "cuidadora", "password": "segura", "next": "/caregiver/"})
+        self.assertEqual(login_response.status_code, 302)
+        self.assertTrue(login_response["Location"].endswith("/caregiver/"))
+        page = client.get("/caregiver/")
+        self.assertContains(page, "Hidratação")
+        self.assertContains(page, "C-01")
+        recorded = client.post(f"/api/tasks/{task.pk}/complete/", {"status": "DONE", "note": "Realizado conforme plano."}, content_type="application/json")
+        self.assertEqual(recorded.status_code, 200)
+        task.refresh_from_db()
+        self.assertEqual(task.completed_by_id, self.staff.id)
+        self.assertIsNotNone(task.completed_at)
+        self.assertEqual(AuditEvent.objects.filter(operation="TASK_COMPLETE", actor=self.staff).count(), 1)
+
+    def test_non_completed_task_requires_reason(self):
+        task = CareTask.objects.create(plan=self.plan, name="Mobilidade", scheduled_at=timezone.now())
+        rejected = self.client.post(f"/api/tasks/{task.pk}/complete/", {"status": "MISSED"}, format="json")
+        self.assertEqual(rejected.status_code, 400)
+        accepted = self.client.post(f"/api/tasks/{task.pk}/complete/", {"status": "MISSED", "note": "Residente recusou o procedimento."}, format="json")
+        self.assertEqual(accepted.status_code, 200)
 
     def test_manager_can_read_summary_report(self):
         self.staff.role = "COORD"; self.staff.save(update_fields=["role"])

@@ -11,7 +11,10 @@ class InstitutionalFlowE2ETests(TestCase):
 
     def test_public_presentation_and_caregiver_pages_render(self):
         self.assertEqual(self.client.get("/apresentacao/").status_code, 200)
-        self.assertContains(self.client.get("/caregiver/"), "Residentes da unidade")
+        caregiver = self.client.get("/caregiver/")
+        self.assertRedirects(caregiver, "/login/?next=/caregiver/")
+        self.client.post("/login/", {"username": "coord-e2e", "password": "senha-e2e-123456", "next": "/caregiver/"})
+        self.assertContains(self.client.get("/caregiver/"), "Cuidados pendentes")
 
     def test_manager_login_reaches_premium_central(self):
         response = self.client.post("/login/", {"username": "coord-e2e", "password": "senha-e2e-123456"})
