@@ -90,6 +90,8 @@ class ResidentViewSet(InstitutionScopedMixin, viewsets.ModelViewSet):
         resident = self.get_object()
         device_id = request.data.get("device_id", "unknown")
         emergency = bool(request.data.get("emergency", False))
+        if emergency:
+            self.require_roles("ADMIN", "COORD", "NURSE")
         if not isinstance(device_id, str) or not device_id.strip():
             return Response({"device_id": ["Identificador do dispositivo é obrigatório."]}, status=400)
         obj = open_resident_session(self.profile(), resident, device_id.strip(), emergency)
@@ -103,7 +105,10 @@ class TaskViewSet(InstitutionScopedMixin, viewsets.ReadOnlyModelViewSet):
     def complete(self, request, pk=None):
         self.require_roles("ADMIN", "COORD", "NURSE", "CAREGIVER")
         task = self.get_object()
-        task = complete_task(self.profile(), task, request.data.get("status", "DONE"), request.data.get("note", ""))
+        requested_status = request.data.get("status", "DONE")
+        if requested_status not in {"DONE", "MISSED", "REFUSED", "EXCEPTION"}:
+            return Response({"status": ["Status de conclusão inválido."]}, status=400)
+        task = complete_task(self.profile(), task, requested_status, request.data.get("note", ""))
         return Response(CareTaskSerializer(task).data)
 
 class MedicationViewSet(InstitutionScopedMixin, viewsets.ReadOnlyModelViewSet):
@@ -126,6 +131,7 @@ class AlertViewSet(InstitutionScopedMixin, viewsets.ReadOnlyModelViewSet):
         return Alert.objects.filter(resident__institution=self.profile().institution).order_by("-created_at")
     @action(detail=True, methods=["post"])
     def close(self, request, pk=None):
+        self.require_roles("ADMIN", "COORD", "NURSE")
         alert = self.get_object(); alert.status = "CLOSED"; alert.closed_at = timezone.now(); alert.acknowledged_by = self.profile(); alert.save()
         audit(self.profile(), "ALERT_CLOSE", alert.resident, after={"alert_id": alert.id})
         return Response(AlertSerializer(alert).data)

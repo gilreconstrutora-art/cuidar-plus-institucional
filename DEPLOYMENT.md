@@ -22,6 +22,16 @@ $env:BOOTSTRAP_PASSWORD = "senha-com-12-ou-mais-caracteres"
 
 Depois acesse `/login/` e, após autenticar, `/central/`.
 
+## Produção segura
+
+Defina `DJANGO_DEBUG=0`, `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_CSRF_TRUSTED_ORIGINS`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` e `REDIS_URL` no ambiente do provedor. Não coloque esses valores no GitHub. O Compose exige os segredos de banco e da aplicação e persiste Redis com AOF.
+
+O worker envia a outbox somente quando `NOTIFICATION_WEBHOOK_URL` estiver configurada; sem esse valor, os eventos ficam pendentes e são reprogramados, sem fingir que foram enviados.
+
+## Backup
+
+`manage.py backup_db caminho/arquivo` cria cópia SQLite local ou dump customizado PostgreSQL quando `pg_dump` estiver disponível. O arquivo deve ser armazenado fora do host e sua restauração deve ser testada em ambiente separado antes de qualquer uso real.
+
 ## Docker
 
 ```powershell

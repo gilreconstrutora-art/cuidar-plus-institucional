@@ -5,7 +5,8 @@ from django.core.management import call_command
 from tempfile import NamedTemporaryFile
 from django.utils import timezone
 from rest_framework.test import APIClient
-from .models import Institution, StaffProfile, Resident, CarePlan, CareTask, Medication, MedicationAdministration, Alert, AuditEvent, FamilyAccess
+from .models import Institution, StaffProfile, Resident, CarePlan, CareTask, Medication, MedicationAdministration, Alert, AuditEvent, FamilyAccess, NotificationDelivery
+from .tasks import process_notification_outbox
 
 class CareCoreTests(TestCase):
     def setUp(self):
@@ -29,6 +30,7 @@ class CareCoreTests(TestCase):
         self.assertEqual(first.status_code, 201)
         second = self.client.post(f"/api/residents/{self.resident.pk}/session/", {"device_id": "cel-2"}, format="json")
         self.assertEqual(second.status_code, 400)
+        self.staff.role = "COORD"; self.staff.save(update_fields=["role"])
         emergency = self.client.post(f"/api/residents/{self.resident.pk}/session/", {"device_id": "cel-2", "emergency": True}, format="json")
         self.assertEqual(emergency.status_code, 201)
         self.assertEqual(AuditEvent.objects.filter(operation="SESSION_EMERGENCY_TRANSFER").count(), 1)
@@ -80,3 +82,11 @@ class CareCoreTests(TestCase):
         login_response = client.post("/login/", {"username": "manager", "password": "senha-segura-123"})
         self.assertEqual(login_response.status_code, 302)
         self.assertTrue(login_response["Location"].endswith("/central/"))
+
+    def test_notification_outbox_stays_pending_without_external_adapter(self):
+        row = NotificationDelivery.objects.create(channel="WEBHOOK", recipient="teste", event="ALERT", payload={"ok": True})
+        result = process_notification_outbox()
+        row.refresh_from_db()
+        self.assertEqual(result["deferred"], 1)
+        self.assertEqual(row.status, "PENDING")
+        self.assertEqual(row.attempts, 1)

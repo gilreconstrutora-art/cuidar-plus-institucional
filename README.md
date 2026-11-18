@@ -39,4 +39,4 @@ Para acesso gerencial, use `/login/`; após autenticar, a central fica em `/cent
 
 ## Limites atuais
 
-Este é um núcleo executável para piloto controlado, não uma declaração de prontidão clínica irrestrita. Permanecem dependências externas: provisionamento real de PostgreSQL/Redis/HTTPS, adaptador de envio de notificações, política de backup fora do host, testes de restauração em infraestrutura-alvo, testes E2E em dispositivos reais e validação dos protocolos por profissionais habilitados.
+Este é um núcleo executável para piloto controlado, não uma declaração de prontidão clínica irrestrita. Permanecem dependências externas: provisionamento real de PostgreSQL/Redis/HTTPS, configuração do webhook de notificações, política de backup fora do host, testes de restauração em infraestrutura-alvo, testes E2E em dispositivos reais e validação dos protocolos por profissionais habilitados.
